@@ -7,6 +7,7 @@ to existing tracks, creates new tracks, and removes lost tracks.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -28,7 +29,10 @@ class Track:
     misses: int = 0         # Consecutive frames without detection
     age: int = 0            # Total frames alive
     is_confirmed: bool = False
-    history: list[tuple[float, float]] = field(default_factory=list)
+    # Rolling history (last 100 positions) — bounded to prevent memory leak
+    history: deque[tuple[float, float]] = field(
+        default_factory=lambda: deque(maxlen=100)
+    )
 
     @property
     def position(self) -> tuple[float, float]:

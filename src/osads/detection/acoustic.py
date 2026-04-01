@@ -41,12 +41,16 @@ class FrequencyAnalyzer:
     3. Match peaks to known insect frequency ranges
     """
 
-    # Scientifically verified insect wing-beat frequency ranges
+    # Scientifically verified insect wing-beat frequency ranges (min, max, peak)
+    # Sources: Arthur et al. PMC3985972, Wikipedia Insect Flight, Rockstein 1966
     INSECT_FREQUENCIES: dict[str, tuple[float, float, float]] = {
-        # (min_hz, max_hz, peak_hz)
-        "mosquito": (350, 1000, 550),
-        "gnat": (500, 1050, 680),
-        "fly": (100, 300, 200),
+        # Aedes aegypti female (biting): mean 511 Hz lab, ~664 Hz field
+        # Male: mean 711 Hz lab, ~982 Hz field — broad range covers both + field variance
+        "mosquito": (350, 1000, 511),
+        # Chironomidae / Bradysia fungus gnats: 650-900 Hz (limited primary literature)
+        "gnat": (500, 1050, 700),
+        # Musca domestica: 190 Hz (Wikipedia Insect Flight table, Rockstein 1966 ~200 Hz)
+        "fly": (100, 300, 190),
     }
 
     def __init__(
@@ -61,7 +65,11 @@ class FrequencyAnalyzer:
         self.freqs = np.fft.rfftfreq(chunk_size, d=1.0 / sample_rate)
 
     def analyze(self, audio_chunk: np.ndarray) -> AcousticDetection:
-        """Analyze a single audio chunk for insect sounds."""
+        """Analyze a single audio chunk for insect sounds.
+
+        Uses band-specific energy analysis rather than only the global FFT peak,
+        so loud background noise at other frequencies does not mask insects.
+        """
         if len(audio_chunk) < self.chunk_size:
             return AcousticDetection(
                 detected=False, insect_type=None, confidence=0.0,
@@ -72,26 +80,56 @@ class FrequencyAnalyzer:
         fft_result = np.fft.rfft(windowed)
         magnitude = np.abs(fft_result)
         magnitude_db = 20 * np.log10(magnitude + 1e-10)
-
-        peak_idx = np.argmax(magnitude[1:]) + 1
-        dominant_freq = self.freqs[peak_idx]
-        peak_db = magnitude_db[peak_idx]
         noise_floor = np.median(magnitude_db)
-        snr = peak_db - noise_floor
+        total_energy = float(np.sum(magnitude ** 2)) + 1e-10
 
         best_match: str | None = None
         best_confidence = 0.0
+        best_freq = 0.0
+        best_peak_db = float(noise_floor)
 
         for insect_type, (freq_min, freq_max, freq_peak) in self.INSECT_FREQUENCIES.items():
-            if freq_min <= dominant_freq <= freq_max:
-                freq_dist = abs(dominant_freq - freq_peak) / (freq_max - freq_min)
-                freq_confidence = 1.0 - freq_dist
-                snr_confidence = min(1.0, snr / 30.0)
-                confidence = freq_confidence * 0.6 + snr_confidence * 0.4
+            # Work within the target frequency band only
+            band_mask = (self.freqs >= freq_min) & (self.freqs <= freq_max)
+            if not band_mask.any():
+                continue
 
-                if confidence > best_confidence:
-                    best_confidence = confidence
-                    best_match = insect_type
+            band_mag = magnitude[band_mask]
+            band_freqs = self.freqs[band_mask]
+            band_db = magnitude_db[band_mask]
+
+            # Peak within band
+            band_peak_idx = int(np.argmax(band_mag))
+            band_dominant_freq = float(band_freqs[band_peak_idx])
+            band_peak_db = float(band_db[band_peak_idx])
+
+            # Band energy ratio: how much of total signal energy is in this band?
+            band_energy = float(np.sum(band_mag ** 2))
+            energy_ratio = band_energy / total_energy
+
+            # SNR of band peak vs. global noise floor
+            snr = band_peak_db - noise_floor
+            snr_confidence = min(1.0, max(0.0, snr / 30.0))
+
+            # Proximity to known peak frequency
+            freq_dist = abs(band_dominant_freq - freq_peak) / (freq_max - freq_min)
+            freq_confidence = max(0.0, 1.0 - freq_dist)
+
+            # Energy ratio confidence (scaled: 10% of energy in band → 1.0)
+            energy_confidence = min(1.0, energy_ratio * 10.0)
+
+            # Weighted combination
+            confidence = (
+                freq_confidence * 0.4
+                + snr_confidence * 0.35
+                + energy_confidence * 0.25
+            )
+
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_match = insect_type
+                best_freq = band_dominant_freq
+                best_peak_db = band_peak_db
 
         detected = best_match is not None and best_confidence >= self.detection_threshold
 
@@ -99,8 +137,8 @@ class FrequencyAnalyzer:
             detected=detected,
             insect_type=best_match if detected else None,
             confidence=best_confidence if detected else 0.0,
-            dominant_frequency=dominant_freq,
-            spectrum_peak_db=peak_db,
+            dominant_frequency=best_freq,
+            spectrum_peak_db=best_peak_db,
         )
 
     def compute_spectrogram(

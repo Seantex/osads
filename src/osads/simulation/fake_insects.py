@@ -37,22 +37,26 @@ class SimulatedInsect:
         "mosquito": {
             "speed_range": (1.0, 5.0),
             "size_range": (3, 8),
-            "freq_range": (400.0, 700.0),  # Female Aedes 484-664 Hz
-            "freq_peak": 550.0,
+            # Arthur et al. PMC3985972: Aedes aegypti female 421-578 Hz lab, ~664 Hz field
+            # Male 571-832 Hz lab, ~982 Hz field. Full range for realism.
+            "freq_range": (421.0, 700.0),
+            "freq_peak": 511.0,   # Female lab mean ± 46 Hz (n=11)
             "direction_change_prob": 0.3,
         },
         "gnat": {
             "speed_range": (1.0, 3.0),
             "size_range": (2, 5),
-            "freq_range": (600.0, 750.0),  # Chironomidae 650-700 Hz
-            "freq_peak": 680.0,
+            # Chironomidae / Bradysia: primary literature sparse; 650-900 Hz estimated
+            "freq_range": (600.0, 900.0),
+            "freq_peak": 700.0,
             "direction_change_prob": 0.4,
         },
         "fly": {
             "speed_range": (3.0, 10.0),
             "size_range": (5, 12),
-            "freq_range": (150.0, 280.0),  # Musca domestica 190-250 Hz
-            "freq_peak": 200.0,
+            # Musca domestica: 190 Hz (Wikipedia Insect Flight), Rockstein 1966 ~200 Hz
+            "freq_range": (160.0, 250.0),
+            "freq_peak": 190.0,
             "direction_change_prob": 0.2,
         },
     })
@@ -61,8 +65,10 @@ class SimulatedInsect:
         profile = self.PROFILES.get(self.insect_type, self.PROFILES["mosquito"])
         if self.size == 5:  # default, randomize
             self.size = random.randint(*profile["size_range"])
+        # Use full biological frequency range (not just ±30Hz from peak)
+        # e.g. Aedes aegypti females span 421-578Hz (Arthur et al. PMC3985972)
         freq_min, freq_max = profile["freq_range"]
-        self.wing_freq = profile["freq_peak"] + random.uniform(-30, 30)
+        self.wing_freq = random.uniform(freq_min, freq_max)
         speed_min, speed_max = profile["speed_range"]
         speed = random.uniform(speed_min, speed_max)
         angle = random.uniform(0, 2 * math.pi)

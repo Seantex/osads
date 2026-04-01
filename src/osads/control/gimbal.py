@@ -55,6 +55,9 @@ class SimulatedGimbal:
         fov_h: float = 60.0,
         fov_v: float = 45.0,
         max_speed: float = 300.0,
+        kp: float = 0.7,
+        ki: float = 0.02,
+        kd: float = 0.15,
     ) -> None:
         self.frame_w = frame_width
         self.frame_h = frame_height
@@ -62,9 +65,8 @@ class SimulatedGimbal:
         self.fov_v = fov_v
         self.max_speed = max_speed
         self.state = GimbalState()
-        # Aggressive PID: fast convergence, minimal overshoot
-        self.pid_x = PIDController(kp=0.7, ki=0.02, kd=0.15)
-        self.pid_y = PIDController(kp=0.7, ki=0.02, kd=0.15)
+        self.pid_x = PIDController(kp=kp, ki=ki, kd=kd)
+        self.pid_y = PIDController(kp=kp, ki=ki, kd=kd)
         self.laser_on = False
         self._laser_x = float(frame_width / 2)
         self._laser_y = float(frame_height / 2)

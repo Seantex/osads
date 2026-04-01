@@ -78,7 +78,9 @@ class KalmanTracker:
         K = self.P @ self.H.T @ np.linalg.inv(S)  # Kalman gain
 
         self.state = self.state + K @ y
-        self.P = (np.eye(4) - K @ self.H) @ self.P
+        # Joseph form: numerically stable, keeps P symmetric positive-definite
+        I_KH = np.eye(4) - K @ self.H
+        self.P = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T
         return self.state.copy()
 
     def predict_future(self, steps: int = 5) -> list[tuple[float, float]]:

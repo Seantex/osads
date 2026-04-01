@@ -67,10 +67,17 @@ class OSADSPipeline:
             min_hits_to_confirm=self.config["tracking"]["min_hits"],
         )
 
-        # Control
+        # Control — read PID from config so config/default.yaml is the single source of truth
         sim_cfg = self.config.get("simulation", {})
         arena = sim_cfg.get("arena_size", [640, 480])
-        self.gimbal = SimulatedGimbal(frame_width=arena[0], frame_height=arena[1])
+        pid_cfg = self.config.get("control", {}).get("pid", {})
+        self.gimbal = SimulatedGimbal(
+            frame_width=arena[0],
+            frame_height=arena[1],
+            kp=pid_cfg.get("kp", 0.7),
+            ki=pid_cfg.get("ki", 0.02),
+            kd=pid_cfg.get("kd", 0.15),
+        )
 
         # Validation
         self.metrics = PerformanceTracker(hit_threshold_px=10.0)
@@ -142,11 +149,18 @@ class OSADSPipeline:
                     trainer = self.audio_classifiers[self.target_mode]
                     audio_confirmed, audio_conf = trainer.predict(mel)
 
-                # 5. Sensor fusion
+                # 5. Sensor fusion — boosts confidence of visually-confirmed+acoustically-matched detections
                 fused = self.fusion.fuse(visual_dets, acoustic_det)
 
-                # 6. Update tracker
-                active_tracks = self.tracker.update(visual_dets)
+                # 6. Update tracker with fused detections (higher confidence than raw visual)
+                # The fusion updates visual detection confidence in-place when acoustic agrees.
+                # Fall back to raw visual_dets if fusion filtered everything out.
+                fused_visual = [f.visual for f in fused if f.visual is not None]
+                for f in fused:
+                    if f.visual is not None:
+                        f.visual.confidence = f.fused_confidence  # propagate fused confidence
+                tracking_dets = fused_visual if fused_visual else visual_dets
+                active_tracks = self.tracker.update(tracking_dets)
 
                 # 7. Aim gimbal at best target
                 target = self.tracker.get_target()

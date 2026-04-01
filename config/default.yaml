@@ -25,21 +25,27 @@ detection:
     chunk_size: 2048
     hop_length: 512
     # Wissenschaftlich verifizierte Frequenzbereiche (Hz)
-    # Quellen: Arthur et al. PMC3985972, Nature Sci Rep 2025,
-    #          UF Insect Records, Rockstein 1966
+    # Quellen: Arthur et al. PMC3985972 (Aedes aegypti),
+    #          Wikipedia Insect Flight table, UF Insect Records, Rockstein 1966
     frequency_ranges:
       mosquito:
+        # Aedes aegypti Weibchen (Stechende): 421-578 Hz Labor, ~664 Hz Freiland
+        # Männchen: 571-832 Hz Labor, ~982 Hz Freiland (Arthur et al. PMC3985972)
+        # Breiter Bereich deckt beide Geschlechter + Feldvarianz ab
         min: 350
         max: 1000
-        peak: 550       # Aedes aegypti Weibchen ~484-664Hz
+        peak: 511       # Mittelwert Weibchen Labor (n=11, ±46 Hz)
       gnat:
+        # Chironomidae / Bradysia (Trauermücken): 650-900 Hz
+        # Wenig Primärliteratur; Bereich konservativ gewählt
         min: 500
         max: 1050
-        peak: 680       # Chironomidae 650-700Hz
+        peak: 700       # Zentrum Chironomidae-Bereich
       fly:
+        # Musca domestica: 190 Hz (Wikipedia Insect Flight), Rockstein 1966: ~200 Hz
         min: 100
         max: 300
-        peak: 200       # Musca domestica 190-250Hz
+        peak: 190       # Primärliteratur-Wert Musca domestica
     detection_threshold: 0.6
     model_path: "models/insect_audio_classifier.pt"
 
