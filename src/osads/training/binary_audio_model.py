@@ -158,7 +158,8 @@ class BinaryAudioDataset(Dataset):
         """Generate varied background noise including confusing frequencies."""
         noise_type = np.random.choice([
             "white", "pink", "hum", "silence", "high_tone", "random_tone",
-        ])
+            "modulated_hum", "modulated_high",
+        ], p=[0.15, 0.10, 0.15, 0.10, 0.15, 0.10, 0.125, 0.125])
         t = np.linspace(0, self.duration, self.n_samples, endpoint=False)
 
         if noise_type == "white":
@@ -168,18 +169,38 @@ class BinaryAudioDataset(Dataset):
             white = np.random.normal(0, 0.03, self.n_samples)
             return (np.cumsum(white) * 0.002).astype(np.float32)
         elif noise_type == "hum":
+            # Plain electric hum — no insect-like modulation
+            freq = np.random.choice([50.0, 60.0, 100.0, 150.0, 200.0])
+            amp = np.random.uniform(0.05, 0.35)
+            sig = amp * np.sin(2 * np.pi * freq * t)
+            sig += np.random.normal(0, 0.01, self.n_samples)
+            return sig.astype(np.float32)
+        elif noise_type == "modulated_hum":
+            # Hard negative: electric hum WITH insect-like AM — must NOT trigger
             freq = np.random.choice([50.0, 60.0, 100.0])
-            sig = 0.02 * np.sin(2 * np.pi * freq * t)
+            mod = np.random.uniform(8, 35)   # overlaps insect mod_freq ranges
+            amp = np.random.uniform(0.1, 0.35)
+            sig = amp * np.sin(2 * np.pi * freq * t)
+            sig *= 0.5 + 0.5 * np.sin(2 * np.pi * mod * t)
             sig += np.random.normal(0, 0.01, self.n_samples)
             return sig.astype(np.float32)
         elif noise_type == "high_tone":
-            # High-frequency non-insect sounds (1-8 kHz) to prevent false positives
+            # High-frequency non-insect sounds (1-8 kHz), plain
             freq = np.random.uniform(1000, 8000)
             sig = np.random.uniform(0.05, 0.3) * np.sin(2 * np.pi * freq * t)
             sig += np.random.normal(0, 0.02, self.n_samples)
             return sig.astype(np.float32)
+        elif noise_type == "modulated_high":
+            # Hard negative: high-frequency tone WITH insect-like AM — must NOT trigger
+            freq = np.random.uniform(1000, 6000)
+            mod = np.random.uniform(8, 35)
+            amp = np.random.uniform(0.1, 0.3)
+            sig = amp * np.sin(2 * np.pi * freq * t)
+            sig *= 0.5 + 0.5 * np.sin(2 * np.pi * mod * t)
+            sig += np.random.normal(0, 0.015, self.n_samples)
+            return sig.astype(np.float32)
         elif noise_type == "random_tone":
-            # Random tones outside target range
+            # Random tones across full range, plain
             freq = np.random.uniform(50, 5000)
             sig = np.random.uniform(0.05, 0.2) * np.sin(2 * np.pi * freq * t)
             sig += np.random.normal(0, 0.02, self.n_samples)

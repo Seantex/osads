@@ -81,20 +81,30 @@ def test_mode(trainer: BinaryAudioTrainer, mode: str) -> None:
         results.append(detected)
         logger.info(f"{name:<30} {str(detected):<10} {conf:<10.3f} {ok}")
 
+    def make_plain_tone(freq: float, amp: float = 0.2) -> np.ndarray:
+        """Plain sine wave — no insect AM, for realistic non-insect tests."""
+        sig = amp * np.sin(2 * np.pi * freq * t)
+        sig += np.random.normal(0, 0.01, len(t))
+        return sig.astype(np.float32)
+
+    def make_modulated_tone(freq: float, mod: float = 18.0, amp: float = 0.2) -> np.ndarray:
+        """Sine with insect-like AM — hardest negative case."""
+        sig = amp * np.sin(2 * np.pi * freq * t)
+        sig *= 0.5 + 0.5 * np.sin(2 * np.pi * mod * t)
+        sig += np.random.normal(0, 0.01, len(t))
+        return sig.astype(np.float32)
+
     # Negative tests (should NOT detect)
-    for name, freq, harmonics in [
-        ("background noise", 0, []),
-        ("silence", -1, []),
-        ("electric hum 50Hz", 50, [1.0]),
-        ("non-insect 2kHz", 2000, [1.0]),
-        ("non-insect 4kHz", 4000, [1.0]),
-    ]:
-        if freq == 0:
-            audio = np.random.normal(0, 0.02, len(t)).astype(np.float32)
-        elif freq < 0:
-            audio = np.random.normal(0, 0.002, len(t)).astype(np.float32)
-        else:
-            audio = make_insect(freq, harmonics)
+    negatives = [
+        ("background noise",        np.random.normal(0, 0.02, len(t)).astype(np.float32)),
+        ("silence",                 np.random.normal(0, 0.002, len(t)).astype(np.float32)),
+        ("electric hum 50Hz plain", make_plain_tone(50.0)),
+        ("electric hum 50Hz AM",    make_modulated_tone(50.0, mod=18.0)),
+        ("non-insect 2kHz plain",   make_plain_tone(2000.0)),
+        ("non-insect 2kHz AM",      make_modulated_tone(2000.0, mod=18.0)),
+        ("non-insect 4kHz",         make_plain_tone(4000.0)),
+    ]
+    for name, audio in negatives:
         mel = mel_ext.extract(audio)
         detected, conf = trainer.predict(mel)
         ok = "OK" if not detected else "FALSE+"
