@@ -80,8 +80,20 @@ class FrequencyAnalyzer:
         fft_result = np.fft.rfft(windowed)
         magnitude = np.abs(fft_result)
         magnitude_db = 20 * np.log10(magnitude + 1e-10)
-        noise_floor = np.median(magnitude_db)
         total_energy = float(np.sum(magnitude ** 2)) + 1e-10
+
+        # Robust noise floor: 75th percentile of magnitude_db.
+        # Using the global median would be near −200 dB for pure tones (almost no noise),
+        # making every spectral leakage look like a high-SNR signal.
+        # The 75th percentile stays near the true signal level and gives a
+        # meaningful reference for genuine in-band peaks.
+        noise_floor = float(np.percentile(magnitude_db, 75))
+
+        # Minimum fraction of total signal energy that must lie inside a band
+        # before it is even considered.  Spectral leakage from out-of-band
+        # tones (e.g. 50 Hz into the fly band) contributes << 1 % of total
+        # energy, so this gate cleanly rejects it.
+        MIN_ENERGY_RATIO = 0.04  # 4 % gate
 
         best_match: str | None = None
         best_confidence = 0.0
@@ -98,30 +110,33 @@ class FrequencyAnalyzer:
             band_freqs = self.freqs[band_mask]
             band_db = magnitude_db[band_mask]
 
+            # Hard gate: skip if less than MIN_ENERGY_RATIO of total energy is in band.
+            # This rejects spectral leakage from powerful out-of-band sources.
+            band_energy = float(np.sum(band_mag ** 2))
+            energy_ratio = band_energy / total_energy
+            if energy_ratio < MIN_ENERGY_RATIO:
+                continue
+
             # Peak within band
             band_peak_idx = int(np.argmax(band_mag))
             band_dominant_freq = float(band_freqs[band_peak_idx])
             band_peak_db = float(band_db[band_peak_idx])
 
-            # Band energy ratio: how much of total signal energy is in this band?
-            band_energy = float(np.sum(band_mag ** 2))
-            energy_ratio = band_energy / total_energy
-
-            # SNR of band peak vs. global noise floor
+            # SNR of band peak vs. robust noise floor (75th percentile)
             snr = band_peak_db - noise_floor
-            snr_confidence = min(1.0, max(0.0, snr / 30.0))
+            snr_confidence = min(1.0, max(0.0, snr / 20.0))
 
-            # Proximity to known peak frequency
+            # Proximity to known peak frequency (0 = at peak, 1 = at edge)
             freq_dist = abs(band_dominant_freq - freq_peak) / (freq_max - freq_min)
             freq_confidence = max(0.0, 1.0 - freq_dist)
 
-            # Energy ratio confidence (scaled: 10% of energy in band → 1.0)
-            energy_confidence = min(1.0, energy_ratio * 10.0)
+            # Energy ratio confidence (4 % → 0.0, 40 % → 1.0)
+            energy_confidence = min(1.0, (energy_ratio - MIN_ENERGY_RATIO) / 0.36)
 
             # Weighted combination
             confidence = (
-                freq_confidence * 0.4
-                + snr_confidence * 0.35
+                freq_confidence   * 0.40
+                + snr_confidence  * 0.35
                 + energy_confidence * 0.25
             )
 
