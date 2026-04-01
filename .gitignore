@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.pt
+!models/mosquito_detector.pt
+!models/gnat_detector.pt
+!models/fly_detector.pt
+.DS_Store
+*.log

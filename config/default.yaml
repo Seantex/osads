@@ -1,0 +1,123 @@
+# OSADS Configuration - Default (Simulation Mode)
+
+system:
+  mode: "simulation"  # simulation | hardware
+  log_level: "INFO"
+  target_fps: 30
+  # Target mode: mosquito | gnat | fly | auto
+  # Each mode uses a dedicated binary classifier for higher accuracy
+  target_mode: "mosquito"
+
+detection:
+  visual:
+    enabled: true
+    model_path: "models/insect_yolov8n.pt"
+    confidence_threshold: 0.5
+    input_size: 640
+    classes:
+      - mosquito
+      - gnat
+      - fly
+
+  acoustic:
+    enabled: true
+    sample_rate: 44100
+    chunk_size: 2048
+    hop_length: 512
+    # Wissenschaftlich verifizierte Frequenzbereiche (Hz)
+    # Quellen: Arthur et al. PMC3985972, Nature Sci Rep 2025,
+    #          UF Insect Records, Rockstein 1966
+    frequency_ranges:
+      mosquito:
+        min: 350
+        max: 1000
+        peak: 550       # Aedes aegypti Weibchen ~484-664Hz
+      gnat:
+        min: 500
+        max: 1050
+        peak: 680       # Chironomidae 650-700Hz
+      fly:
+        min: 100
+        max: 300
+        peak: 200       # Musca domestica 190-250Hz
+    detection_threshold: 0.6
+    model_path: "models/insect_audio_classifier.pt"
+
+  fusion:
+    enabled: true
+    # Gewichtung der Sensoren
+    visual_weight: 0.6
+    acoustic_weight: 0.4
+    min_combined_confidence: 0.7
+
+tracking:
+  algorithm: "kalman"  # kalman | deepsort
+  max_lost_frames: 15
+  min_hits: 3
+  iou_threshold: 0.3
+  # Kalman-Filter Parameter
+  kalman:
+    process_noise: 0.01
+    measurement_noise: 0.1
+
+control:
+  gimbal:
+    enabled: false  # false in simulation
+    pan_pin: 18
+    tilt_pin: 19
+    pan_range: [-90, 90]
+    tilt_range: [-45, 45]
+    speed: 300  # Grad/Sekunde
+  laser:
+    enabled: false  # false in simulation
+    pin: 25
+    max_dwell_time: 5.0  # Sekunden
+  pid:
+    kp: 0.5
+    ki: 0.01
+    kd: 0.1
+
+simulation:
+  # Simulierte Insekten-Parameter
+  num_insects: 3
+  arena_size: [640, 480]
+  insect_types:
+    mosquito:
+      speed_range: [1, 5]       # Pixel/Frame
+      direction_change: 0.3     # Wahrscheinlichkeit
+      size_range: [3, 8]        # Pixel
+      color: [0, 255, 0]        # Grün
+    gnat:
+      speed_range: [1, 3]
+      direction_change: 0.4
+      size_range: [2, 5]
+      color: [255, 255, 0]      # Gelb
+    fly:
+      speed_range: [3, 10]
+      direction_change: 0.2
+      size_range: [5, 12]
+      color: [0, 0, 255]        # Blau
+  generate_audio: true
+  background_noise_level: 0.02
+
+training:
+  audio:
+    epochs: 100
+    batch_size: 32
+    learning_rate: 0.001
+    val_split: 0.2
+    augmentation:
+      noise_level: [0.01, 0.05]
+      pitch_shift: [-2, 2]
+      time_stretch: [0.8, 1.2]
+  visual:
+    epochs: 200
+    batch_size: 16
+    learning_rate: 0.001
+    val_split: 0.2
+    img_size: 640
+    augmentation:
+      flip: true
+      rotate: [-15, 15]
+      brightness: [0.7, 1.3]
+      blur: [0, 2]
