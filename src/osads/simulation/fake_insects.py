@@ -177,10 +177,14 @@ class InsectSwarm:
 
         frame = self._bg_frame.copy()
 
+        # OpenCV BGR colour values — chosen for high grayscale luminance:
+        # mosquito green:  gray = 0.587*200 = 117  ✓
+        # gnat    cyan:    gray ≈ 117+23    = 140  ✓
+        # fly     red:     gray = 0.299*200 =  60  ✓  (was blue=23 ← BUG, dark as bg)
         colors = {
-            "mosquito": (0, 200, 0),
-            "gnat": (0, 200, 200),
-            "fly": (200, 0, 0),
+            "mosquito": (0, 200, 0),    # BGR green
+            "gnat":     (0, 200, 200),  # BGR cyan
+            "fly":      (0, 0, 200),    # BGR red   (was (200,0,0)=blue, gray≈23 < bg≈30!)
         }
 
         for insect in self.insects:

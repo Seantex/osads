@@ -1,9 +1,12 @@
 """OSADS Main Pipeline - Detection → Tracking → Aiming → Validation.
 
-Supports 3 target modes: mosquito, gnat, fly
-Each mode uses a dedicated binary audio classifier.
+Supports 4 target modes:
+  mosquito / gnat / fly  — dedicated binary audio classifier per mode
+  auto                   — alle 3 Classifier parallel, automatische Erkennung
+
 Keyboard controls (GUI mode):
-  q = quit, s = stats, 1 = mosquito, 2 = gnat, 3 = fly
+  q = quit, s = stats
+  1 = mosquito, 2 = gnat, 3 = fly, 0 = AUTO
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import numpy as np
 from osads.config import load_config
 from osads.control.gimbal import SimulatedGimbal
 from osads.detection.acoustic import AcousticDetection, FrequencyAnalyzer
+from osads.detection.auto_mode import AutoDetection, AutoDetector, INSECT_EMOJI
 from osads.detection.fusion import SensorFusion
 from osads.detection.visual import VisualDetectionPipeline
 from osads.simulation.fake_insects import InsectSwarm
@@ -31,7 +35,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-MODES = {"mosquito": "MOSQUITO", "gnat": "GNAT/MUECKE", "fly": "FLY/FLIEGE"}
+MODES = {
+    "mosquito": "MOSQUITO",
+    "gnat":     "GNAT/MUECKE",
+    "fly":      "FLY/FLIEGE",
+    "auto":     "AUTO",
+}
 
 
 class OSADSPipeline:
@@ -60,6 +69,11 @@ class OSADSPipeline:
         # Binary audio classifiers (one per mode)
         self.audio_classifiers: dict[str, Any] = {}
         self._load_audio_classifiers()
+
+        # AUTO-Modus: alle 3 Classifier parallel
+        self._auto_detector: AutoDetector | None = None
+        self._auto_detection: AutoDetection | None = None
+        self._init_auto_detector()
 
         # Tracking
         self.tracker = MultiTracker(
@@ -101,7 +115,7 @@ class OSADSPipeline:
         """Load binary audio classifiers for each mode if available."""
         try:
             from osads.training.binary_audio_model import BinaryAudioTrainer
-            for mode in MODES:
+            for mode in ("mosquito", "gnat", "fly"):
                 model_path = Path(f"models/{mode}_detector.pt")
                 if model_path.exists():
                     trainer = BinaryAudioTrainer(target_insect=mode)
@@ -111,10 +125,29 @@ class OSADSPipeline:
         except Exception as e:
             logger.warning(f"Could not load audio classifiers: {e}")
 
+    def _init_auto_detector(self) -> None:
+        """Initialisiert den AutoDetector sobald Classifier geladen sind."""
+        if not self.audio_classifiers:
+            return
+        try:
+            from osads.detection.acoustic import MelSpectrogramExtractor
+            if not hasattr(self, "_mel_ext"):
+                self._mel_ext = MelSpectrogramExtractor()
+            self._auto_detector = AutoDetector(
+                audio_classifiers=self.audio_classifiers,
+                mel_extractor=self._mel_ext,
+                frequency_analyzer=self.acoustic,
+            )
+            logger.info("AUTO detector ready")
+        except Exception as e:
+            logger.warning(f"Could not init AUTO detector: {e}")
+
     def set_mode(self, mode: str) -> None:
-        """Switch target mode."""
+        """Switch target mode (mosquito / gnat / fly / auto)."""
         if mode in MODES:
             self.target_mode = mode
+            if mode == "auto" and self._auto_detector is not None:
+                self._auto_detector.reset()
             logger.info(f"Mode switched to: {MODES[mode]}")
 
     def run(self, max_frames: int = 0, show_gui: bool = True) -> dict[str, Any]:
@@ -138,16 +171,29 @@ class OSADSPipeline:
                 # 3. Acoustic detection (FFT)
                 acoustic_det = self.acoustic.analyze(audio) if audio is not None else None
 
-                # 4. Audio ML classification (binary, mode-specific)
+                # 4. Audio ML classification
                 audio_confirmed = False
                 audio_conf = 0.0
-                if audio is not None and self.target_mode in self.audio_classifiers:
-                    from osads.detection.acoustic import MelSpectrogramExtractor
+                self._auto_detection = None
+
+                if audio is not None:
                     if not hasattr(self, "_mel_ext"):
+                        from osads.detection.acoustic import MelSpectrogramExtractor
                         self._mel_ext = MelSpectrogramExtractor()
-                    mel = self._mel_ext.extract(audio)
-                    trainer = self.audio_classifiers[self.target_mode]
-                    audio_confirmed, audio_conf = trainer.predict(mel)
+
+                    if self.target_mode == "auto":
+                        # AUTO: alle 3 Classifier parallel, Voting-Ergebnis
+                        if self._auto_detector is not None:
+                            det = self._auto_detector.analyze(audio)
+                            self._auto_detection = det
+                            if det.detected_type != "none":
+                                audio_confirmed = True
+                                audio_conf = det.confidence
+                    elif self.target_mode in self.audio_classifiers:
+                        # Einzelmodus: nur den passenden Classifier
+                        mel = self._mel_ext.extract(audio)
+                        trainer = self.audio_classifiers[self.target_mode]
+                        audio_confirmed, audio_conf = trainer.predict(mel)
 
                 # 5. Sensor fusion — boosts confidence of visually-confirmed+acoustically-matched detections
                 fused = self.fusion.fuse(visual_dets, acoustic_det)
@@ -195,6 +241,8 @@ class OSADSPipeline:
                         self.running = False
                     elif key == ord("s"):
                         self._print_stats()
+                    elif key == ord("0"):
+                        self.set_mode("auto")
                     elif key == ord("1"):
                         self.set_mode("mosquito")
                     elif key == ord("2"):
@@ -208,13 +256,23 @@ class OSADSPipeline:
 
                 if self.frame_count % 100 == 0:
                     summary = self.metrics.summary()
+                    if self.target_mode == "auto" and self._auto_detection is not None:
+                        ad = self._auto_detection
+                        audio_str = (
+                            f"AUTO:{ad.detected_type}({ad.confidence:.2f}) "
+                            f"M={ad.smoothed.get('mosquito',0):.2f} "
+                            f"G={ad.smoothed.get('gnat',0):.2f} "
+                            f"F={ad.smoothed.get('fly',0):.2f}"
+                        )
+                    else:
+                        audio_str = f"{'YES' if audio_confirmed else 'no'}({audio_conf:.2f})"
                     logger.info(
                         f"Frame {self.frame_count} | "
                         f"Mode: {self.target_mode} | "
                         f"Dets: {len(visual_dets)} | "
                         f"Tracks: {len(active_tracks)} | "
                         f"Hit: {summary.get('hit_rate_pct', 0):.1f}% | "
-                        f"Audio: {'YES' if audio_confirmed else 'no'} ({audio_conf:.2f}) | "
+                        f"Audio: {audio_str} | "
                         f"Lat: {latency:.1f}ms"
                     )
 
@@ -280,25 +338,48 @@ class OSADSPipeline:
         # HUD - Top left
         summary = self.metrics.summary()
         h = display.shape[0]
-        mode_color = {"mosquito": (0, 255, 0), "gnat": (0, 255, 255), "fly": (255, 0, 0)}
+        mode_color = {
+            "mosquito": (0, 255, 0),
+            "gnat":     (0, 255, 255),
+            "fly":      (255, 80, 80),
+            "auto":     (255, 200, 0),
+        }
         mc = mode_color.get(self.target_mode, (255, 255, 255))
+
+        # Audio-Zeile: AUTO zeigt alle 3 Scores, Einzel-Modi nur eigenen
+        if self.target_mode == "auto" and self._auto_detection is not None:
+            ad = self._auto_detection
+            detected_label = ad.detected_type.upper() if ad.detected_type != "none" else "---"
+            audio_line = (
+                f"AUTO: {detected_label} ({ad.confidence:.2f}) "
+                f"M={ad.smoothed.get('mosquito', 0):.2f} "
+                f"G={ad.smoothed.get('gnat', 0):.2f} "
+                f"F={ad.smoothed.get('fly', 0):.2f}"
+            )
+            audio_color = (
+                mode_color.get(ad.detected_type, (200, 200, 200))
+                if ad.detected_type != "none" else (128, 128, 128)
+            )
+        else:
+            audio_line = f"Audio: {'CONFIRMED' if audio_confirmed else 'none'} ({audio_conf:.2f})"
+            audio_color = mc
 
         hud = [
             (f"MODE: {MODES[self.target_mode]}", mc),
-            (f"Frame: {self.frame_count}", (0, 255, 0)),
-            (f"Detections: {len(detections)}", (0, 255, 0)),
-            (f"Tracks: {len(tracks)}", (0, 255, 0)),
+            (f"Frame: {self.frame_count}", (200, 200, 200)),
+            (f"Detections: {len(detections)}", (200, 200, 200)),
+            (f"Tracks: {len(tracks)}", (200, 200, 200)),
             (f"Hit Rate: {summary.get('hit_rate_pct', 0):.1f}%", (0, 255, 0)),
-            (f"Latency: {summary.get('avg_latency_ms', 0):.1f}ms", (0, 255, 0)),
-            (f"Audio: {'CONFIRMED' if audio_confirmed else 'none'} ({audio_conf:.2f})", mc),
+            (f"Latency: {summary.get('avg_latency_ms', 0):.1f}ms", (200, 200, 200)),
+            (audio_line, audio_color),
         ]
         for i, (line, color) in enumerate(hud):
             cv2.putText(display, line, (10, 15 + i * 16),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
 
         # Mode switch hint - bottom right
-        hint = "[1]Mosquito [2]Gnat [3]Fly [Q]Quit [S]Stats"
-        cv2.putText(display, hint, (display.shape[1] - 380, h - 5),
+        hint = "[0]AUTO [1]Mosquito [2]Gnat [3]Fly [Q]Quit [S]Stats"
+        cv2.putText(display, hint, (display.shape[1] - 430, h - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.3, (128, 128, 128), 1)
 
         return display

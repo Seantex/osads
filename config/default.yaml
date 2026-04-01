@@ -12,7 +12,7 @@ detection:
   visual:
     enabled: true
     model_path: "models/insect_yolov8n.pt"
-    confidence_threshold: 0.5
+    confidence_threshold: 0.30   # Minimum = Min-Wert der Konfidenzformel (area/50 ≥ 0.3)
     input_size: 640
     classes:
       - mosquito

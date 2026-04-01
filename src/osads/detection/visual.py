@@ -93,9 +93,14 @@ class MotionDetector:
         # Threshold
         _, fg_mask = cv2.threshold(diff, 15, 255, cv2.THRESH_BINARY)
 
-        # Minimal morphology
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        fg_mask = cv2.dilate(fg_mask, kernel, iterations=1)
+        # Morphological CLOSE: verbindet Abflug- und Ankunfts-Blob schneller
+        # Insekten (departure + arrival blobs bis ~12px auseinander).
+        # CLOSE = Dilate + Erode — füllt Lücken zwischen nahen Blobs.
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel_close)
+        # Kleines Dilate für dünnere Konturen
+        kernel_d = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        fg_mask = cv2.dilate(fg_mask, kernel_d, iterations=1)
 
         # Find contours
         contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
